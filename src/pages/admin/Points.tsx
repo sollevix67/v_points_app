@@ -148,7 +148,7 @@ export default function Points() {
 
   const initAutocomplete = () => {
     if (addressInputRef.current && window.google) {
-      autocompleteRef.current = new window.google.maps.places.PlaceAutocompleteElement(addressInputRef.current, {
+      autocompleteRef.current = new window.google.maps.places.Autocomplete(addressInputRef.current, {
         componentRestrictions: { country: 'fr' },
         fields: ['address_components', 'geometry', 'formatted_address'],
       });

@@ -12,6 +12,27 @@ declare global {
   }
 }
 
+type AddressComponent = {
+  longText: string;
+  types: string[];
+};
+
+type SelectedPlace = {
+  addressComponents?: AddressComponent[];
+  formattedAddress?: string;
+  location?: {
+    lat: () => number;
+    lng: () => number;
+  };
+  fetchFields: (options: { fields: string[] }) => Promise<void>;
+};
+
+type PlacePredictionSelectEvent = Event & {
+  placePrediction: {
+    toPlace: () => SelectedPlace;
+  };
+};
+
 export default function Points() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -36,8 +57,8 @@ export default function Points() {
     streetview_zoom: 1,
     comment: '',
   });
-  const addressInputRef = useRef<HTMLInputElement>(null);
-  const autocompleteRef = useRef<any>(null);
+  const autocompleteContainerRef = useRef<HTMLDivElement>(null);
+  const autocompleteRef = useRef<(HTMLElement & { value: string }) | null>(null);
   const streetViewRef = useRef<any>(null);
   const panoramaRef = useRef<any>(null);
 
@@ -57,8 +78,13 @@ export default function Points() {
 
   useEffect(() => {
     if (isModalOpen && window.google) {
-      initAutocomplete();
+      void initAutocomplete();
     }
+
+    return () => {
+      autocompleteRef.current?.remove();
+      autocompleteRef.current = null;
+    };
   }, [isModalOpen]);
 
   const loadGoogleMapsScript = () => {
@@ -114,26 +140,26 @@ export default function Points() {
     }
   }, [isModalOpen, formData.latitude, formData.longitude]);
 
-  const extractAddressComponents = (place: any) => {
+  const extractAddressComponents = (components: AddressComponent[] = []) => {
     let streetNumber = '';
     let route = '';
     let city = '';
     let postalCode = '';
 
-    place.address_components.forEach((component: any) => {
+    components.forEach((component) => {
       const types = component.types;
 
       if (types.includes('street_number')) {
-        streetNumber = component.long_name;
+        streetNumber = component.longText;
       }
       if (types.includes('route')) {
-        route = component.long_name;
+        route = component.longText;
       }
       if (types.includes('locality')) {
-        city = component.long_name;
+        city = component.longText;
       }
       if (types.includes('postal_code')) {
-        postalCode = component.long_name;
+        postalCode = component.longText;
       }
     });
 
@@ -146,29 +172,47 @@ export default function Points() {
     };
   };
 
-  const initAutocomplete = () => {
-    if (addressInputRef.current && window.google) {
-      autocompleteRef.current = new window.google.maps.places.Autocomplete(addressInputRef.current, {
-        componentRestrictions: { country: 'fr' },
-        fields: ['address_components', 'geometry', 'formatted_address'],
+  const initAutocomplete = async () => {
+    if (!autocompleteContainerRef.current || !window.google || autocompleteRef.current) return;
+
+    const container = autocompleteContainerRef.current;
+    const { PlaceAutocompleteElement } = await window.google.maps.importLibrary('places');
+    if (!container.isConnected || autocompleteRef.current) return;
+
+    const autocomplete = new PlaceAutocompleteElement({
+      includedRegionCodes: ['fr'],
+      placeholder: 'Commencez à taper une adresse...',
+      requestedLanguage: 'fr',
+      requestedRegion: 'fr',
+      value: formData.address,
+    }) as HTMLElement & { value: string };
+
+    autocomplete.className = 'w-full';
+    autocomplete.addEventListener('gmp-select', async (event: Event) => {
+      const { placePrediction } = event as PlacePredictionSelectEvent;
+      const place = placePrediction.toPlace();
+      await place.fetchFields({
+        fields: ['addressComponents', 'formattedAddress', 'location'],
       });
 
-      autocompleteRef.current.addListener('place_changed', () => {
-        const place = autocompleteRef.current.getPlace();
-        if (place.geometry) {
-          const { streetAddress, city, postalCode } = extractAddressComponents(place);
+      if (!place.location) return;
 
-          setFormData(prev => ({
-            ...prev,
-            address: streetAddress,
-            city: city || prev.city,
-            postal_code: postalCode || prev.postal_code,
-            latitude: place.geometry.location.lat(),
-            longitude: place.geometry.location.lng(),
-          }));
-        }
-      });
-    }
+      const { streetAddress, city, postalCode } = extractAddressComponents(
+        place.addressComponents,
+      );
+
+      setFormData(prev => ({
+        ...prev,
+        address: streetAddress || place.formattedAddress || autocomplete.value,
+        city: city || prev.city,
+        postal_code: postalCode || prev.postal_code,
+        latitude: place.location!.lat(),
+        longitude: place.location!.lng(),
+      }));
+    });
+
+    container.replaceChildren(autocomplete);
+    autocompleteRef.current = autocomplete;
   };
 
   const fetchPoints = async () => {
@@ -426,15 +470,7 @@ export default function Points() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Adresse
                   </label>
-                  <input
-                    ref={addressInputRef}
-                    type="text"
-                    value={formData.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full p-2 border rounded"
-                    required
-                    placeholder="Commencez à taper une adresse..."
-                  />
+                  <div ref={autocompleteContainerRef} className="w-full" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

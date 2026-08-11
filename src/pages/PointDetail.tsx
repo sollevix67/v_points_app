@@ -164,11 +164,13 @@ export default function PointDetail() {
               <h2 className="text-xl font-semibold mb-4">Street View</h2>
               <div className="rounded-lg shadow-sm overflow-hidden bg-gray-100 h-[300px] relative">
                 <iframe
+                  title={`Street View de ${point.name}`}
                   width="100%"
                   height="100%"
                   frameBorder="0"
                   style={{ border: 0 }}
                   src={`https://www.google.com/maps/embed/v1/streetview?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&location=${point.latitude},${point.longitude}&heading=${point.streetview_heading}&pitch=${point.streetview_pitch}&fov=${Math.max(10, Math.min(100, 120 / (point.streetview_zoom || 1)))}`}
+                  allow="accelerometer; gyroscope"
                   allowFullScreen
                 />
               </div>

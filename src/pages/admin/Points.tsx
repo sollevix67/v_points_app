@@ -188,6 +188,11 @@ export default function Points() {
     }) as HTMLElement & { value: string };
 
     autocomplete.className = 'w-full';
+    autocomplete.style.colorScheme = 'light';
+    autocomplete.style.backgroundColor = '#ffffff';
+    autocomplete.style.color = '#111827';
+    autocomplete.style.border = '1px solid #d1d5db';
+    autocomplete.style.borderRadius = '0.25rem';
     autocomplete.addEventListener('gmp-select', async (event: Event) => {
       const { placePrediction } = event as PlacePredictionSelectEvent;
       const place = placePrediction.toPlace();

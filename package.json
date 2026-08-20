@@ -1,6 +1,9 @@
 {
   "name": "delivery-points-manager",
   "private": true,
+  "allowScripts": [
+    "*"
+  ],
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -12,6 +15,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
     "@types/leaflet": "^1.9.8",
+    "baseline-browser-mapping": "^2.11.16",
+    "caniuse-lite": "^1.0.30001809",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",

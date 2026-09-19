@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { DeliveryPoint, DeliveryPointFormData } from '../../types/types';
 import AdminLayout from '../../components/AdminLayout';
@@ -33,112 +33,141 @@ type PlacePredictionSelectEvent = Event & {
   };
 };
 
+const EMPTY_FORM: DeliveryPointFormData = {
+  point_type: 'parcel_shop',
+  shop_code: '',
+  name: '',
+  address: '',
+  postal_code: '',
+  city: '',
+  latitude: 0,
+  longitude: 0,
+  is_active: true,
+  opening_timeframe: '',
+  streetview_heading: 210,
+  streetview_pitch: 0,
+  streetview_zoom: 1,
+  comment: '',
+};
+
+const normalizeText = (value?: string | null) => value?.trim() ?? '';
+
+const isValidLatitude = (value: number) => Number.isFinite(value) && value >= -90 && value <= 90;
+const isValidLongitude = (value: number) => Number.isFinite(value) && value >= -180 && value <= 180;
+
+const sanitizeFormData = (data: DeliveryPointFormData): DeliveryPointFormData => {
+  const sanitized: DeliveryPointFormData = {
+    ...data,
+    point_type: data.point_type === 'locker' ? 'locker' : 'parcel_shop',
+    shop_code: normalizeText(data.shop_code),
+    name: normalizeText(data.name),
+    address: normalizeText(data.address),
+    postal_code: normalizeText(data.postal_code),
+    city: normalizeText(data.city),
+    opening_timeframe: normalizeText(data.opening_timeframe),
+    comment: normalizeText(data.comment),
+    latitude: Number(data.latitude ?? 0),
+    longitude: Number(data.longitude ?? 0),
+    streetview_heading: Number.isFinite(Number(data.streetview_heading)) ? Number(data.streetview_heading) : 210,
+    streetview_pitch: Number.isFinite(Number(data.streetview_pitch)) ? Number(data.streetview_pitch) : 0,
+    streetview_zoom: Number.isFinite(Number(data.streetview_zoom)) ? Number(data.streetview_zoom) : 1,
+  };
+
+  return sanitized;
+};
+
+const validateFormData = (data: DeliveryPointFormData) => {
+  const { shop_code, name, address, postal_code, city, latitude, longitude } = sanitizeFormData(data);
+
+  if (!shop_code || !name || !address || !postal_code || !city) {
+    return 'Tous les champs obligatoires doivent être renseignés.';
+  }
+
+  if (!isValidLatitude(latitude)) {
+    return 'La latitude doit être un nombre valide entre -90 et 90.';
+  }
+
+  if (!isValidLongitude(longitude)) {
+    return 'La longitude doit être un nombre valide entre -180 et 180.';
+  }
+
+  if (!/^[0-9]{5}$/.test(postal_code)) {
+    return 'Le code postal doit contenir 5 chiffres.';
+  }
+
+  if (shop_code.length > 100 || name.length > 200 || address.length > 255 || city.length > 120) {
+    return 'Un des champs dépasse la longueur autorisée.';
+  }
+
+  return null;
+};
+
 export default function Points() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const editId = searchParams.get('edit');
   const [points, setPoints] = useState<DeliveryPoint[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPoint, setEditingPoint] = useState<DeliveryPoint | null>(null);
-  const [formData, setFormData] = useState<DeliveryPointFormData>({
-    point_type: 'parcel_shop',
-    shop_code: '',
-    name: '',
-    address: '',
-    postal_code: '',
-    city: '',
-    latitude: 0,
-    longitude: 0,
-    is_active: true,
-    opening_timeframe: '',
-    streetview_heading: 210,
-    streetview_pitch: 0,
-    streetview_zoom: 1,
-    comment: '',
-  });
+  const [formData, setFormData] = useState<DeliveryPointFormData>(EMPTY_FORM);
   const autocompleteContainerRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<(HTMLElement & { value: string }) | null>(null);
   const streetViewRef = useRef<any>(null);
   const panoramaRef = useRef<any>(null);
 
-  useEffect(() => {
-    fetchPoints();
-    loadGoogleMapsScript();
-  }, []);
+  const showError = (message: string) => {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded shadow-lg z-50';
+    errorDiv.textContent = message;
+    document.body.appendChild(errorDiv);
+    window.setTimeout(() => errorDiv.remove(), 5000);
+  };
 
-  useEffect(() => {
-    if (editId && points.length > 0) {
-      const point = points.find(p => p.id === editId);
-      if (point) {
-        handleEdit(point);
-      }
+  const fetchPoints = async () => {
+    const { data, error } = await supabase
+      .from('delivery_points')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching points:', error);
+      showError('Impossible de charger les points de livraison.');
+      return;
     }
-  }, [editId, points]);
 
-  useEffect(() => {
-    if (isModalOpen && window.google) {
-      void initAutocomplete();
-    }
-
-    return () => {
-      autocompleteRef.current?.remove();
-      autocompleteRef.current = null;
-    };
-  }, [isModalOpen]);
+    setPoints(data ?? []);
+  };
 
   const loadGoogleMapsScript = () => {
-    if (!document.querySelector('script[src*="maps.googleapis.com/maps/api"]')) {
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&loading=async&libraries=places`;
-      script.async = true;
-      script.defer = true;
-      script.onload = () => {
-        initAutocomplete();
-        if (isModalOpen) {
-          initStreetView();
-        }
-      };
-      document.head.appendChild(script);
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+
+    if (!apiKey) {
+      console.warn('VITE_GOOGLE_MAPS_API_KEY is missing');
+      return;
     }
-  };
 
-  const initStreetView = () => {
-    if (!streetViewRef.current || !window.google || !formData.latitude || !formData.longitude) return;
-
-    const position = { lat: formData.latitude, lng: formData.longitude };
-    
-    panoramaRef.current = new window.google.maps.StreetViewPanorama(streetViewRef.current, {
-      position,
-      pov: {
-        heading: formData.streetview_heading,
-        pitch: formData.streetview_pitch,
-        zoom: formData.streetview_zoom
-      },
-      addressControl: false,
-      linksControl: false,
-      panControl: false,
-      enableCloseButton: false,
-      zoomControl: false,
-      fullscreenControl: false
-    });
-
-    panoramaRef.current.addListener('pov_changed', () => {
-      const pov = panoramaRef.current.getPov();
-      setFormData(prev => ({
-        ...prev,
-        streetview_heading: Math.round(pov.heading),
-        streetview_pitch: Math.round(pov.pitch),
-        streetview_zoom: Math.round(pov.zoom)
-      }));
-    });
-  };
-
-  useEffect(() => {
-    if (isModalOpen && window.google && formData.latitude && formData.longitude) {
-      initStreetView();
+    if (document.querySelector('script[src*="maps.googleapis.com/maps/api"]')) {
+      if (window.google) {
+        void initAutocomplete();
+      }
+      return;
     }
-  }, [isModalOpen, formData.latitude, formData.longitude]);
+
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (isModalOpen) {
+        void initAutocomplete();
+      }
+    };
+    script.onerror = () => {
+      showError('Le chargement de Google Maps a échoué. Vérifiez votre clé API.');
+    };
+
+    document.head.appendChild(script);
+  };
 
   const extractAddressComponents = (components: AddressComponent[] = []) => {
     let streetNumber = '';
@@ -147,7 +176,7 @@ export default function Points() {
     let postalCode = '';
 
     components.forEach((component) => {
-      const types = component.types;
+      const types = component.types || [];
 
       if (types.includes('street_number')) {
         streetNumber = component.longText;
@@ -163,10 +192,8 @@ export default function Points() {
       }
     });
 
-    const streetAddress = [streetNumber, route].filter(Boolean).join(' ');
-    
     return {
-      streetAddress,
+      streetAddress: [streetNumber, route].filter(Boolean).join(' '),
       city,
       postalCode,
     };
@@ -176,197 +203,257 @@ export default function Points() {
     if (!autocompleteContainerRef.current || !window.google || autocompleteRef.current) return;
 
     const container = autocompleteContainerRef.current;
-    const { PlaceAutocompleteElement } = await window.google.maps.importLibrary('places');
-    if (!container.isConnected || autocompleteRef.current) return;
 
-    const autocomplete = new PlaceAutocompleteElement({
-      includedRegionCodes: ['fr'],
-      placeholder: 'Commencez à taper une adresse...',
-      requestedLanguage: 'fr',
-      requestedRegion: 'fr',
-      value: formData.address,
-    }) as HTMLElement & { value: string };
+    try {
+      const { PlaceAutocompleteElement } = await window.google.maps.importLibrary('places');
+      if (!container.isConnected || autocompleteRef.current) return;
 
-    autocomplete.className = 'w-full';
-    autocomplete.style.colorScheme = 'light';
-    autocomplete.style.backgroundColor = '#ffffff';
-    autocomplete.style.color = '#111827';
-    autocomplete.style.border = '1px solid #d1d5db';
-    autocomplete.style.borderRadius = '0.25rem';
-    autocomplete.addEventListener('gmp-select', async (event: Event) => {
-      const { placePrediction } = event as PlacePredictionSelectEvent;
-      const place = placePrediction.toPlace();
-      await place.fetchFields({
-        fields: ['addressComponents', 'formattedAddress', 'location'],
+      const autocomplete = new PlaceAutocompleteElement({
+        includedRegionCodes: ['fr'],
+        placeholder: 'Commencez à taper une adresse...',
+        requestedLanguage: 'fr',
+        requestedRegion: 'fr',
+        value: formData.address,
+      }) as HTMLElement & { value: string };
+
+      autocomplete.className = 'w-full';
+      autocomplete.style.colorScheme = 'light';
+      autocomplete.style.backgroundColor = '#ffffff';
+      autocomplete.style.color = '#111827';
+      autocomplete.style.border = '1px solid #d1d5db';
+      autocomplete.style.borderRadius = '0.25rem';
+
+      autocomplete.addEventListener('gmp-select', async (event: Event) => {
+        const { placePrediction } = event as PlacePredictionSelectEvent;
+        const place = placePrediction.toPlace();
+
+        await place.fetchFields({
+          fields: ['addressComponents', 'formattedAddress', 'location'],
+        });
+
+        if (!place.location) return;
+
+        const { streetAddress, city, postalCode } = extractAddressComponents(
+          place.addressComponents ?? [],
+        );
+
+        setFormData((prev) => ({
+          ...prev,
+          address: streetAddress || place.formattedAddress || autocomplete.value,
+          city: city || prev.city,
+          postal_code: postalCode || prev.postal_code,
+          latitude: Number(place.location!.lat()),
+          longitude: Number(place.location!.lng()),
+        }));
       });
 
-      if (!place.location) return;
-
-      const { streetAddress, city, postalCode } = extractAddressComponents(
-        place.addressComponents,
-      );
-
-      setFormData(prev => ({
-        ...prev,
-        address: streetAddress || place.formattedAddress || autocomplete.value,
-        city: city || prev.city,
-        postal_code: postalCode || prev.postal_code,
-        latitude: place.location!.lat(),
-        longitude: place.location!.lng(),
-      }));
-    });
-
-    container.replaceChildren(autocomplete);
-    autocompleteRef.current = autocomplete;
-  };
-
-  const fetchPoints = async () => {
-    const { data, error } = await supabase
-      .from('delivery_points')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching points:', error);
-      return;
+      container.replaceChildren(autocomplete);
+      autocompleteRef.current = autocomplete;
+    } catch (error) {
+      console.error('Google Places init failed:', error);
+      showError('L’autocomplétion d’adresse n’a pas pu être initialisée.');
     }
-
-    setPoints(data || []);
   };
 
-  const filteredPoints = points.filter(point =>
-    point.shop_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    point.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const showError = (message: string) => {
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded';
-    errorDiv.textContent = message;
-    document.body.appendChild(errorDiv);
-    setTimeout(() => errorDiv.remove(), 5000);
-  };
-
-  const validateFormData = () => {
-    const trimmedShopCode = formData.shop_code.trim();
-    const trimmedName = formData.name.trim();
-    const trimmedAddress = formData.address.trim();
-    const trimmedCity = formData.city.trim();
-    const postalCode = formData.postal_code.trim();
+  const initStreetView = () => {
     const latitude = Number(formData.latitude);
     const longitude = Number(formData.longitude);
 
-    if (!trimmedShopCode || !trimmedName || !trimmedAddress || !trimmedCity || !postalCode) {
-      return 'Tous les champs obligatoires doivent être renseignés.';
+    if (!streetViewRef.current || !window.google || !isValidLatitude(latitude) || !isValidLongitude(longitude)) {
+      return;
     }
 
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-      return 'La latitude doit être un nombre valide entre -90 et 90.';
+    if (panoramaRef.current) {
+      try {
+        panoramaRef.current.setVisible(false);
+      } catch {
+        // ignored
+      }
+      panoramaRef.current = null;
     }
 
-    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-      return 'La longitude doit être un nombre valide entre -180 et 180.';
-    }
+    const position = { lat: latitude, lng: longitude };
 
-    if (!/^[0-9]{5}$/.test(postalCode)) {
-      return 'Le code postal doit contenir 5 chiffres.';
-    }
+    panoramaRef.current = new window.google.maps.StreetViewPanorama(streetViewRef.current, {
+      position,
+      pov: {
+        heading: Number(formData.streetview_heading ?? 210),
+        pitch: Number(formData.streetview_pitch ?? 0),
+        zoom: Number(formData.streetview_zoom ?? 1),
+      },
+      addressControl: false,
+      linksControl: false,
+      panControl: false,
+      enableCloseButton: false,
+      zoomControl: false,
+      fullscreenControl: false,
+    });
 
-    if (trimmedShopCode.length > 100 || trimmedName.length > 200 || trimmedAddress.length > 255 || trimmedCity.length > 120) {
-      return 'Un des champs dépasse la longueur autorisée.';
-    }
-
-    return null;
+    panoramaRef.current.addListener('pov_changed', () => {
+      const pov = panoramaRef.current.getPov();
+      setFormData((prev) => ({
+        ...prev,
+        streetview_heading: Math.round(pov.heading),
+        streetview_pitch: Math.round(pov.pitch),
+        streetview_zoom: Math.round(pov.zoom),
+      }));
+    });
   };
+
+  useEffect(() => {
+    fetchPoints();
+    loadGoogleMapsScript();
+  }, []);
+
+  useEffect(() => {
+    if (editId && points.length > 0) {
+      const point = points.find((p) => p.id === editId);
+      if (point) {
+        handleEdit(point);
+      }
+    }
+  }, [editId, points]);
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      if (autocompleteRef.current) {
+        autocompleteRef.current.remove();
+        autocompleteRef.current = null;
+      }
+      return;
+    }
+
+    if (window.google) {
+      void initAutocomplete();
+    }
+
+    return () => {
+      if (autocompleteRef.current) {
+        autocompleteRef.current.remove();
+        autocompleteRef.current = null;
+      }
+    };
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    if (!isModalOpen || !streetViewRef.current || !window.google) return;
+
+    const latitude = Number(formData.latitude);
+    const longitude = Number(formData.longitude);
+
+    if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) return;
+
+    initStreetView();
+
+    return () => {
+      if (panoramaRef.current) {
+        try {
+          window.google.maps.event.clearListeners(panoramaRef.current, 'pov_changed');
+          panoramaRef.current.setVisible(false);
+        } catch {
+          // ignored
+        }
+        panoramaRef.current = null;
+      }
+    };
+  }, [isModalOpen, formData.latitude, formData.longitude]);
+
+  const filteredPoints = (points ?? []).filter((point) => {
+    const search = searchTerm.toLowerCase();
+    const shopCode = String(point.shop_code ?? '').toLowerCase();
+    const name = String(point.name ?? '').toLowerCase();
+
+    return shopCode.includes(search) || name.includes(search);
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const validationError = validateFormData();
+    const cleanedFormData = sanitizeFormData(formData);
+    const validationError = validateFormData(cleanedFormData);
+
     if (validationError) {
       showError(validationError);
       return;
     }
 
-    if (editingPoint) {
-      const { error } = await supabase
-        .from('delivery_points')
-        .update({
-          ...formData,
-          shop_code: formData.shop_code.trim(),
-          name: formData.name.trim(),
-          address: formData.address.trim(),
-          city: formData.city.trim(),
-          postal_code: formData.postal_code.trim(),
-          comment: formData.comment?.trim() || null,
-          opening_timeframe: formData.opening_timeframe?.trim() || null,
-        })
-        .eq('id', editingPoint.id);
+    const payload = {
+      ...cleanedFormData,
+      shop_code: cleanedFormData.shop_code.trim(),
+      name: cleanedFormData.name.trim(),
+      address: cleanedFormData.address.trim(),
+      city: cleanedFormData.city.trim(),
+      postal_code: cleanedFormData.postal_code.trim(),
+      comment: cleanedFormData.comment?.trim() || null,
+      opening_timeframe: cleanedFormData.opening_timeframe?.trim() || null,
+    };
 
-      if (error) {
-        console.error('Error updating point:', error);
-        if (error.code === '23505') {
-          showError(`Le code magasin "${formData.shop_code}" existe déjà.`);
-        } else {
-          showError('Une erreur est survenue lors de la mise à jour du point.');
-        }
-        return;
-      }
-    } else {
-      const { error } = await supabase
-        .from('delivery_points')
-        .insert([{
-          ...formData,
-          shop_code: formData.shop_code.trim(),
-          name: formData.name.trim(),
-          address: formData.address.trim(),
-          city: formData.city.trim(),
-          postal_code: formData.postal_code.trim(),
-          comment: formData.comment?.trim() || null,
-          opening_timeframe: formData.opening_timeframe?.trim() || null,
-        }]);
+    try {
+      if (editingPoint) {
+        const { error } = await supabase
+          .from('delivery_points')
+          .update(payload)
+          .eq('id', editingPoint.id);
 
-      if (error) {
-        console.error('Error creating point:', error);
-        if (error.code === '23505') {
-          showError(`Le code magasin "${formData.shop_code}" existe déjà.`);
-        } else {
-          showError('Une erreur est survenue lors de la création du point.');
+        if (error) {
+          console.error('Error updating point:', error);
+          if (error.code === '23505') {
+            showError(`Le code magasin "${payload.shop_code}" existe déjà.`);
+          } else {
+            showError('Une erreur est survenue lors de la mise à jour du point.');
+          }
+          return;
         }
-        return;
+      } else {
+        const { error } = await supabase
+          .from('delivery_points')
+          .insert([payload]);
+
+        if (error) {
+          console.error('Error creating point:', error);
+          if (error.code === '23505') {
+            showError(`Le code magasin "${payload.shop_code}" existe déjà.`);
+          } else {
+            showError('Une erreur est survenue lors de la création du point.');
+          }
+          return;
+        }
       }
+
+      setIsModalOpen(false);
+      setEditingPoint(null);
+      setSearchParams({});
+      setFormData(EMPTY_FORM);
+      await fetchPoints();
+    } catch (error) {
+      console.error('Unexpected submit error:', error);
+      showError('Une erreur inattendue est survenue.');
     }
-
-    setIsModalOpen(false);
-    setEditingPoint(null);
-    setSearchParams({});
-    resetForm();
-    fetchPoints();
   };
 
   const handleEdit = (point: DeliveryPoint) => {
     setEditingPoint(point);
     setFormData({
-      point_type: point.point_type,
-      shop_code: point.shop_code,
-      name: point.name,
-      city: point.city,
-      postal_code: point.postal_code,
-      address: point.address,
-      latitude: point.latitude,
-      longitude: point.longitude,
-      is_active: point.is_active,
-      opening_timeframe: point.opening_timeframe || '',
-      streetview_heading: point.streetview_heading || 210,
-      streetview_pitch: point.streetview_pitch || 0,
-      streetview_zoom: point.streetview_zoom || 1,
-      comment: point.comment || '',
+      point_type: point.point_type === 'locker' ? 'locker' : 'parcel_shop',
+      shop_code: point.shop_code ?? '',
+      name: point.name ?? '',
+      city: point.city ?? '',
+      postal_code: point.postal_code ?? '',
+      address: point.address ?? '',
+      latitude: Number(point.latitude ?? 0),
+      longitude: Number(point.longitude ?? 0),
+      is_active: Boolean(point.is_active),
+      opening_timeframe: point.opening_timeframe ?? '',
+      streetview_heading: Number(point.streetview_heading ?? 210),
+      streetview_pitch: Number(point.streetview_pitch ?? 0),
+      streetview_zoom: Number(point.streetview_zoom ?? 1),
+      comment: point.comment ?? '',
     });
     setIsModalOpen(true);
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce point de livraison ?')) {
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce point de livraison ?')) {
       return;
     }
 
@@ -377,29 +464,15 @@ export default function Points() {
 
     if (error) {
       console.error('Error deleting point:', error);
+      showError('La suppression du point a échoué.');
       return;
     }
 
-    fetchPoints();
+    await fetchPoints();
   };
 
   const resetForm = () => {
-    setFormData({
-      point_type: 'parcel_shop',
-      shop_code: '',
-      name: '',
-      city: '',
-      postal_code: '',
-      address: '',
-      latitude: 0,
-      longitude: 0,
-      is_active: true,
-      opening_timeframe: '',
-      streetview_heading: 210,
-      streetview_pitch: 0,
-      streetview_zoom: 1,
-      comment: '',
-    });
+    setFormData(EMPTY_FORM);
   };
 
   return (
@@ -408,6 +481,7 @@ export default function Points() {
         <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold">Points de livraison</h1>
           <button
+            type="button"
             onClick={() => {
               resetForm();
               setEditingPoint(null);
@@ -432,7 +506,7 @@ export default function Points() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="min-w-full">
           <thead>
             <tr className="bg-gray-50">
@@ -461,6 +535,7 @@ export default function Points() {
                 <td className="px-6 py-4">
                   <div className="flex space-x-2">
                     <button
+                      type="button"
                       data-point-id={point.id}
                       onClick={() => handleEdit(point)}
                       className="text-blue-500 hover:text-blue-700"
@@ -468,6 +543,7 @@ export default function Points() {
                       <Pencil size={20} />
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDelete(point.id)}
                       className="text-red-500 hover:text-red-700"
                     >
@@ -482,7 +558,7 @@ export default function Points() {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
           <div className="bg-white rounded-lg p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-2xl font-bold mb-6">
               {editingPoint ? 'Modifier' : 'Ajouter'} un point de livraison
@@ -498,12 +574,12 @@ export default function Points() {
                     onChange={(e) => setFormData({ ...formData, point_type: e.target.value as 'locker' | 'parcel_shop' })}
                     className="w-full p-2 border rounded"
                     required
-                    aria-label="Type de point"
                   >
                     <option value="parcel_shop">Point Relais</option>
                     <option value="locker">Casier</option>
                   </select>
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Code magasin
@@ -511,12 +587,12 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.shop_code}
-                    onChange={(e) => setFormData({ ...formData, shop_code: e.target.value.slice(0, 100) })}
+                    onChange={(e) => setFormData({ ...formData, shop_code: e.target.value })}
                     className="w-full p-2 border rounded"
                     required
-                    maxLength={100}
                   />
                 </div>
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nom
@@ -524,18 +600,19 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value.slice(0, 200) })}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     className="w-full p-2 border rounded"
                     required
-                    maxLength={200}
                   />
                 </div>
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Adresse
                   </label>
                   <div ref={autocompleteContainerRef} className="w-full" />
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Code postal
@@ -543,12 +620,12 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.postal_code}
-                    onChange={(e) => setFormData({ ...formData, postal_code: e.target.value.slice(0, 10) })}
+                    onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
                     className="w-full p-2 border rounded"
                     required
-                    maxLength={10}
                   />
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Ville
@@ -556,12 +633,12 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value.slice(0, 120) })}
+                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                     className="w-full p-2 border rounded"
                     required
-                    maxLength={120}
                   />
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Latitude
@@ -570,11 +647,12 @@ export default function Points() {
                     type="number"
                     step="any"
                     value={formData.latitude}
-                    onChange={(e) => setFormData({ ...formData, latitude: parseFloat(e.target.value) })}
+                    onChange={(e) => setFormData({ ...formData, latitude: Number.parseFloat(e.target.value) || 0 })}
                     className="w-full p-2 border rounded"
                     required
                   />
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Longitude
@@ -583,25 +661,24 @@ export default function Points() {
                     type="number"
                     step="any"
                     value={formData.longitude}
-                    onChange={(e) => setFormData({ ...formData, longitude: parseFloat(e.target.value) })}
+                    onChange={(e) => setFormData({ ...formData, longitude: Number.parseFloat(e.target.value) || 0 })}
                     className="w-full p-2 border rounded"
                     required
                   />
                 </div>
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Aperçu Street View
                   </label>
-                  <div 
-                    ref={streetViewRef} 
-                    className="w-full h-[300px] rounded-lg overflow-hidden mb-2"
-                  ></div>
+                  <div ref={streetViewRef} className="w-full h-[300px] rounded-lg overflow-hidden mb-2" />
                   <p className="text-sm text-gray-600">
-                    Faites glisser la vue pour ajuster l'angle de la caméra. Position actuelle : 
-                    {formData.streetview_heading}° horizontal, {formData.streetview_pitch}° vertical, 
+                    Faites glisser la vue pour ajuster l'angle de la caméra. Position actuelle :
+                    {formData.streetview_heading}° horizontal, {formData.streetview_pitch}° vertical,
                     zoom x{formData.streetview_zoom}
                   </p>
                 </div>
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Horaires d'ouverture
@@ -613,6 +690,7 @@ export default function Points() {
                     placeholder="Lundi-Vendredi: 9h-19h&#10;Samedi: 9h-12h&#10;Dimanche: Fermé"
                   />
                 </div>
+
                 <div className="col-span-2">
                   <label className="flex items-center">
                     <input
@@ -624,6 +702,7 @@ export default function Points() {
                     <span className="text-sm text-gray-700">Point actif</span>
                   </label>
                 </div>
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Commentaire
@@ -636,6 +715,7 @@ export default function Points() {
                   />
                 </div>
               </div>
+
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   type="button"
@@ -648,6 +728,7 @@ export default function Points() {
                 >
                   Annuler
                 </button>
+
                 <button
                   type="submit"
                   className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"

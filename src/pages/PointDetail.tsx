@@ -10,12 +10,16 @@ export default function PointDetail() {
   const [point, setPoint] = useState<DeliveryPoint | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
-  const handleCopyLink = () => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url).then(() => {
+  const handleCopyLink = async () => {
+    try {
+      const url = window.location.href;
+      await navigator.clipboard.writeText(url);
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
-    });
+    } catch (error) {
+      console.error('Failed to copy link:', error);
+      window.alert('Impossible de copier le lien dans le presse-papiers.');
+    }
   };
 
   useEffect(() => {

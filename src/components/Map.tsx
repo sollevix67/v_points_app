@@ -79,12 +79,19 @@ function MapUpdater({ points, selectedPoint }: Props) {
       [FRANCE_BOUNDS.south - 0.1, FRANCE_BOUNDS.west - 0.1],
       [FRANCE_BOUNDS.north + 0.1, FRANCE_BOUNDS.east + 0.1]
     ]);
-    map.on('drag', () => {
+
+    const handleDrag = () => {
       map.panInsideBounds([
         [FRANCE_BOUNDS.south, FRANCE_BOUNDS.west],
         [FRANCE_BOUNDS.north, FRANCE_BOUNDS.east]
       ], { animate: false });
-    });
+    };
+
+    map.on('drag', handleDrag);
+
+    return () => {
+      map.off('drag', handleDrag);
+    };
   }, [map]);
 
   useEffect(() => {
@@ -129,7 +136,7 @@ export default function Map({ points, selectedPoint }: Props) {
       <MapContainer
         center={initialCenter}
         zoom={initialZoom}
-        key={`map-${selectedPoint?.id || 'default'}-${Date.now()}`}
+        key={`map-${selectedPoint?.id || 'default'}`}
         className="w-full h-[600px]"
         scrollWheelZoom={true}
         minZoom={5}
@@ -184,29 +191,17 @@ export default function Map({ points, selectedPoint }: Props) {
         {selectedPoint && (() => {
           const lat = parseCoordinate(selectedPoint.latitude);
           const lng = parseCoordinate(selectedPoint.longitude);
-          
-          console.log('Rendering marker for point:', {
-            id: selectedPoint.id,
-            lat,
-            lng,
-            valid: isValidLatitude(lat) && isValidLongitude(lng)
-          });
-          
+
           if (!isValidLatitude(lat) || !isValidLongitude(lng)) {
             console.warn('Invalid coordinates for point:', selectedPoint.id, { lat, lng });
             return null;
           }
-          
+
           return (
             <Marker
               key={selectedPoint.id}
               icon={bouncingIcon}
-              position={[lat, lng]}
-              eventHandlers={{
-                add: (e) => {
-                  console.log('Marker added to map:', e.target.getLatLng());
-                }
-              }}>
+              position={[lat, lng]}>
               <Popup>
                 <div>
                   <h3 className="font-bold">{selectedPoint.name}</h3>

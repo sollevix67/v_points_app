@@ -239,21 +239,68 @@ export default function Points() {
     point.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const showError = (message: string) => {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded';
+    errorDiv.textContent = message;
+    document.body.appendChild(errorDiv);
+    setTimeout(() => errorDiv.remove(), 5000);
+  };
+
+  const validateFormData = () => {
+    const trimmedShopCode = formData.shop_code.trim();
+    const trimmedName = formData.name.trim();
+    const trimmedAddress = formData.address.trim();
+    const trimmedCity = formData.city.trim();
+    const postalCode = formData.postal_code.trim();
+    const latitude = Number(formData.latitude);
+    const longitude = Number(formData.longitude);
+
+    if (!trimmedShopCode || !trimmedName || !trimmedAddress || !trimmedCity || !postalCode) {
+      return 'Tous les champs obligatoires doivent être renseignés.';
+    }
+
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      return 'La latitude doit être un nombre valide entre -90 et 90.';
+    }
+
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      return 'La longitude doit être un nombre valide entre -180 et 180.';
+    }
+
+    if (!/^[0-9]{5}$/.test(postalCode)) {
+      return 'Le code postal doit contenir 5 chiffres.';
+    }
+
+    if (trimmedShopCode.length > 100 || trimmedName.length > 200 || trimmedAddress.length > 255 || trimmedCity.length > 120) {
+      return 'Un des champs dépasse la longueur autorisée.';
+    }
+
+    return null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const showError = (message: string) => {
-      const errorDiv = document.createElement('div');
-      errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded';
-      errorDiv.textContent = message;
-      document.body.appendChild(errorDiv);
-      setTimeout(() => errorDiv.remove(), 5000);
-    };
+    const validationError = validateFormData();
+    if (validationError) {
+      showError(validationError);
+      return;
+    }
 
     if (editingPoint) {
       const { error } = await supabase
         .from('delivery_points')
-        .update(formData)
+        .update({
+          ...formData,
+          shop_code: formData.shop_code.trim(),
+          name: formData.name.trim(),
+          address: formData.address.trim(),
+          city: formData.city.trim(),
+          postal_code: formData.postal_code.trim(),
+          comment: formData.comment?.trim() || null,
+          opening_timeframe: formData.opening_timeframe?.trim() || null,
+        })
         .eq('id', editingPoint.id);
 
       if (error) {
@@ -268,7 +315,16 @@ export default function Points() {
     } else {
       const { error } = await supabase
         .from('delivery_points')
-        .insert([formData]);
+        .insert([{
+          ...formData,
+          shop_code: formData.shop_code.trim(),
+          name: formData.name.trim(),
+          address: formData.address.trim(),
+          city: formData.city.trim(),
+          postal_code: formData.postal_code.trim(),
+          comment: formData.comment?.trim() || null,
+          opening_timeframe: formData.opening_timeframe?.trim() || null,
+        }]);
 
       if (error) {
         console.error('Error creating point:', error);
@@ -442,6 +498,7 @@ export default function Points() {
                     onChange={(e) => setFormData({ ...formData, point_type: e.target.value as 'locker' | 'parcel_shop' })}
                     className="w-full p-2 border rounded"
                     required
+                    aria-label="Type de point"
                   >
                     <option value="parcel_shop">Point Relais</option>
                     <option value="locker">Casier</option>
@@ -454,9 +511,10 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.shop_code}
-                    onChange={(e) => setFormData({ ...formData, shop_code: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, shop_code: e.target.value.slice(0, 100) })}
                     className="w-full p-2 border rounded"
                     required
+                    maxLength={100}
                   />
                 </div>
                 <div className="col-span-2">
@@ -466,9 +524,10 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value.slice(0, 200) })}
                     className="w-full p-2 border rounded"
                     required
+                    maxLength={200}
                   />
                 </div>
                 <div className="col-span-2">
@@ -484,9 +543,10 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.postal_code}
-                    onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, postal_code: e.target.value.slice(0, 10) })}
                     className="w-full p-2 border rounded"
                     required
+                    maxLength={10}
                   />
                 </div>
                 <div>
@@ -496,9 +556,10 @@ export default function Points() {
                   <input
                     type="text"
                     value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, city: e.target.value.slice(0, 120) })}
                     className="w-full p-2 border rounded"
                     required
+                    maxLength={120}
                   />
                 </div>
                 <div>
